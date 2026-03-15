@@ -8,6 +8,15 @@ from .market import (
     QuoteItem,
     QuoteResponse,
 )
+from .ai import (
+    AIChatMessage,
+    AIChatRequest,
+    AIChatResponse,
+    AIPlanRequest,
+    AIProviderInfo,
+    AIProvidersResponse,
+    AIUsage,
+)
 
 __all__ = [
     "QuoteItem",
@@ -18,4 +27,11 @@ __all__ = [
     "NewsResponse",
     "IndustryItem",
     "IndustryResponse",
+    "AIChatMessage",
+    "AIChatRequest",
+    "AIChatResponse",
+    "AIPlanRequest",
+    "AIUsage",
+    "AIProviderInfo",
+    "AIProvidersResponse",
 ]

@@ -43,7 +43,12 @@ const API_RETRY_COUNT = Number(import.meta.env.VITE_A_SHARE_API_RETRY_COUNT || 1
 const toNumber = (value: Primitive, fallback = 0): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value);
+    const normalized = value
+      .trim()
+      .replace(/,/g, '')
+      .replace(/%$/g, '')
+      .replace(/[\uFF05]/g, '');
+    const parsed = Number(normalized);
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
@@ -205,8 +210,12 @@ export const loadPortfolioFromTrades = async (): Promise<HoldingItem[]> => {
 const normalizeQuote = (raw: GenericRecord): NormalizedQuote => {
   const symbol = String(pick(raw, ['symbol', 'code', 'ts_code'], ''));
   const currentPrice = toNumber(pick(raw, ['currentPrice', 'lastPrice', 'price', 'close', 'last', 'trade']));
-  const prevClose = toNumber(pick(raw, ['prevClose', 'preClose', 'prev_close', 'yesterdayClose']));
   const changeFromApi = toNumber(pick(raw, ['change', 'chg', 'priceChange']), Number.NaN);
+  const prevCloseRaw = toNumber(pick(raw, ['prevClose', 'preClose', 'prev_close', 'yesterdayClose']), Number.NaN);
+
+  const prevClose = Number.isFinite(prevCloseRaw)
+    ? prevCloseRaw
+    : (Number.isFinite(changeFromApi) ? currentPrice - changeFromApi : 0);
 
   const change = Number.isFinite(changeFromApi)
     ? changeFromApi

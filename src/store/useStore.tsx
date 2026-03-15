@@ -24,6 +24,45 @@ interface QuickTradePayload {
 
 const buildSeedTrend = (price: number): number[] => Array.from({ length: 7 }, () => Number(price.toFixed(2)));
 
+const buildTrendFromChartData = (
+  chartPoints: ChartData[],
+  currentPrice: number,
+  targetPoints = 10,
+): number[] => {
+  if (!(currentPrice > 0) || chartPoints.length === 0) {
+    return Array.from({ length: targetPoints }, () => Number(currentPrice.toFixed(2)));
+  }
+
+  const rates = chartPoints
+    .map((item) => item.yieldRate)
+    .filter((value) => Number.isFinite(value));
+
+  if (rates.length === 0) {
+    return Array.from({ length: targetPoints }, () => Number(currentPrice.toFixed(2)));
+  }
+
+  const lastRate = rates[rates.length - 1] ?? 0;
+  const denom = 1 + lastRate / 100;
+  const basePrice = Math.abs(denom) > 1e-6 ? currentPrice / denom : currentPrice;
+
+  const reconstructed = rates
+    .map((rate) => Number((basePrice * (1 + rate / 100)).toFixed(2)))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  if (reconstructed.length === 0) {
+    return Array.from({ length: targetPoints }, () => Number(currentPrice.toFixed(2)));
+  }
+
+  if (reconstructed.length <= targetPoints) {
+    return reconstructed;
+  }
+
+  return Array.from({ length: targetPoints }, (_, idx) => {
+    const pos = Math.round((idx * (reconstructed.length - 1)) / (targetPoints - 1));
+    return reconstructed[pos] ?? reconstructed[reconstructed.length - 1];
+  });
+};
+
 const recalcHoldingByPrice = (holding: HoldingItem, currentPrice: number): HoldingItem => {
   const totalValue = currentPrice * holding.shares;
   const totalCost = holding.cost * holding.shares;
@@ -181,6 +220,7 @@ interface StockStoreContextType {
   // 外部数据加载状态
   isQuotesLoading: boolean;
   isChartLoading: boolean;
+  isInitialChartLoading: boolean;
   isNewsLoading: boolean;
   isIndustriesLoading: boolean;
   apiErrorToast: string | null;
@@ -222,11 +262,13 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
   const [isBackendConnected, setIsBackendConnected] = useState(true);
   const [isQuotesLoading, setIsQuotesLoading] = useState(false);
   const [isChartLoading, setIsChartLoading] = useState(false);
+  const [isInitialChartLoading, setIsInitialChartLoading] = useState(true);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
   const [isIndustriesLoading, setIsIndustriesLoading] = useState(false);
   const [apiErrorToast, setApiErrorToast] = useState<string | null>(null);
   const holdingsRef = useRef<HoldingItem[]>([]);
   const selectedStockRef = useRef<string | null>(null);
+  const initialChartSettledRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastToastAtRef = useRef(0);
 
@@ -266,13 +308,15 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
   }, []);
 
   const loadChartData = useCallback(async (range: TimeRange, symbol?: string | null) => {
+    // 先本地快速兜底，避免等待后端超时导致面板空白
+    const localFallback = buildLocalChartData(holdingsRef.current, range, symbol ?? null);
+    setChartData(localFallback);
     setIsChartLoading(true);
     try {
       const nextChartData = await fetchAShareChartData(range, symbol);
       if (nextChartData.length > 0) {
         setChartData(nextChartData);
         setIsBackendConnected(true);
-        return;
       }
     } catch (error) {
       console.error('Chart request failed:', error);
@@ -280,9 +324,11 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
       notifyApiError('图表服务连接失败，请检查后端 API。');
     } finally {
       setIsChartLoading(false);
+      if (!initialChartSettledRef.current) {
+        initialChartSettledRef.current = true;
+        setIsInitialChartLoading(false);
+      }
     }
-    // Fallback: compute locally from holdings trendData
-    setChartData(buildLocalChartData(holdingsRef.current, range, symbol ?? null));
   }, [notifyApiError]);
 
   // 刷新价格（实时接口）
@@ -314,8 +360,7 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
   // 设置选中的股票
   const handleSetSelectedStock = useCallback((symbol: string | null) => {
     setSelectedStock(symbol);
-    void loadChartData(timeRange, symbol);
-  }, [timeRange, loadChartData]);
+  }, []);
 
   // 设置视图模式
   const handleSetViewMode = useCallback((mode: ViewMode) => {
@@ -325,8 +370,7 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
   // 设置时间范围
   const handleSetTimeRange = useCallback((range: TimeRange) => {
     setTimeRange(range);
-    void loadChartData(range, selectedStock);
-  }, [loadChartData, selectedStock]);
+  }, []);
 
   // 设置新闻展开状态
   const handleSetNewsExpanded = useCallback((id: string, isExpanded: boolean) => {
@@ -436,6 +480,8 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
         let latestHoldings = baseHoldings;
         if (!cancelled) {
           setHoldings(baseHoldings);
+          setIndustries(buildLocalIndustriesData(baseHoldings));
+          setChartData(buildLocalChartData(baseHoldings, '1M', null));
         }
 
         if (baseHoldings.length > 0) {
@@ -447,6 +493,27 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
               latestHoldings = applied;
               setHoldings(applied);
               setIsBackendConnected(true);
+            }
+
+            // 首屏额外拉一次 1D 图表，初始化每只持仓的 10 个缩略图点。
+            const enrichedHoldings = await Promise.all(
+              latestHoldings.map(async (holding) => {
+                try {
+                  const chartPoints = await fetchAShareChartData('1D', holding.symbol);
+                  if (chartPoints.length === 0) return holding;
+                  return {
+                    ...holding,
+                    trendData: buildTrendFromChartData(chartPoints, holding.currentPrice, 10),
+                  };
+                } catch {
+                  return holding;
+                }
+              })
+            );
+
+            if (!cancelled) {
+              latestHoldings = enrichedHoldings;
+              setHoldings(enrichedHoldings);
             }
           } catch (error) {
             console.error('Initial quote request failed:', error);
@@ -495,9 +562,6 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
           }
         }
 
-        if (!cancelled) {
-          void loadChartData('1M', null);
-        }
       } catch (error) {
         console.error('Failed to initialize A-share data source:', error);
       } finally {
@@ -527,12 +591,12 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
     void loadChartData(timeRange, selectedStock);
   }, [timeRange, selectedStock, loadChartData]);
 
-  // 当 holdings 更新且行业数据为空时，使用本地计算填充
+  // 当后端不可用时，使用本地行业计算保持面板有数据
   useEffect(() => {
-    if (holdings.length > 0 && industries.length === 0) {
+    if (!isBackendConnected && holdings.length > 0) {
       setIndustries(buildLocalIndustriesData(holdings));
     }
-  }, [holdings, industries]);
+  }, [holdings, isBackendConnected]);
 
   useEffect(() => {
     return () => {
@@ -554,6 +618,7 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
     isBackendConnected,
     isQuotesLoading,
     isChartLoading,
+    isInitialChartLoading,
     isNewsLoading,
     isIndustriesLoading,
     apiErrorToast,

@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     # Lightweight in-memory rate limit: requests per minute per IP.
     rate_limit_per_minute: int = 120
 
+    # LLM provider settings
+    llm_default_provider: str = "minimax"
+    llm_timeout_ms: int = 20000
+    minimax_api_key: str = ""
+    minimax_group_id: str = ""
+    minimax_base_url: str = "https://api.minimax.chat"
+    minimax_chat_path: str = "/v1/text/chatcompletion_v2"
+    minimax_model: str = "MiniMax-Text-01"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

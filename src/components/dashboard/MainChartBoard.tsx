@@ -135,7 +135,9 @@ export const MainChartBoard = () => {
     viewMode,
     timeRange,
     chartData,
+    isLoading,
     isChartLoading,
+    isInitialChartLoading,
     isBackendConnected,
     setViewMode,
     setTimeRange,
@@ -146,7 +148,7 @@ export const MainChartBoard = () => {
   const isAllView = !currentStock;
 
   const totalValue = holdings.reduce((sum, h) => sum + h.totalValue, 0);
-  const totalCost = holdings.reduce((sum, h) => sum + h.cost, 0);
+  const totalCost = holdings.reduce((sum, h) => sum + h.cost * h.shares, 0);
   const totalProfitLoss = totalValue - totalCost;
   const totalProfitLossPercent = totalCost > 0 ? (totalProfitLoss / totalCost) * 100 : 0;
 
@@ -160,6 +162,7 @@ export const MainChartBoard = () => {
   const positionProfitLossPercent = isAllView ? totalProfitLossPercent : currentStock.profitLossPercent;
   const isPositive = changeValue >= 0;
   const valueLabel = isAllView ? '总市值' : '持仓市值';
+  const shouldShowChartSkeleton = isInitialChartLoading || ((isLoading || isChartLoading) && chartData.length === 0);
 
   return (
     <div className="h-full flex flex-col bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
@@ -246,7 +249,7 @@ export const MainChartBoard = () => {
 
       {/* 图表区域 */}
       <div className="flex-1 min-h-[208px] lg:min-h-[240px] p-5">
-        {isChartLoading ? (
+        {shouldShowChartSkeleton ? (
           <div className="h-full min-h-[176px] lg:min-h-[208px] rounded-xl border border-slate-100 bg-slate-50 p-4 animate-pulse">
             <div className="flex items-center gap-2 text-slate-500 text-sm mb-4">
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -269,8 +272,15 @@ export const MainChartBoard = () => {
             </div>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            {viewMode === 'rate' ? (
+          <div className="h-full relative">
+            {isChartLoading && (
+              <div className="absolute right-2 top-0 z-10 inline-flex items-center gap-1 rounded-md bg-white/90 px-2 py-1 text-xs text-slate-500 shadow-sm">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                更新中
+              </div>
+            )}
+            <ResponsiveContainer width="100%" height="100%">
+              {viewMode === 'rate' ? (
             <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
               <XAxis
@@ -290,6 +300,7 @@ export const MainChartBoard = () => {
               />
               <Tooltip
                 content={<CustomTooltip viewMode={viewMode} />}
+                isAnimationActive={false}
                 formatter={(value: number) => [
                   `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`,
                   '收益率',
@@ -301,11 +312,12 @@ export const MainChartBoard = () => {
                 dataKey="yieldRate"
                 stroke={isPositive ? '#10B981' : '#EF4444'}
                 strokeWidth={2}
+                isAnimationActive={false}
                 dot={false}
                 activeDot={{ r: 4, fill: isPositive ? '#10B981' : '#EF4444' }}
               />
             </LineChart>
-            ) : (
+              ) : (
             <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
               <defs>
                 <linearGradient id="colorYieldAmount" x1="0" y1="0" x2="0" y2="1">
@@ -331,6 +343,7 @@ export const MainChartBoard = () => {
               />
               <Tooltip
                 content={<CustomTooltip viewMode={viewMode} />}
+                isAnimationActive={false}
                 formatter={(value: number) => [
                   `¥${value.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`,
                   '收益额',
@@ -342,11 +355,13 @@ export const MainChartBoard = () => {
                 dataKey="yieldAmount"
                 stroke="#0F172A"
                 strokeWidth={2}
+                isAnimationActive={false}
                 fill="url(#colorYieldAmount)"
               />
             </AreaChart>
-            )}
-          </ResponsiveContainer>
+              )}
+            </ResponsiveContainer>
+          </div>
         )}
       </div>
     </div>

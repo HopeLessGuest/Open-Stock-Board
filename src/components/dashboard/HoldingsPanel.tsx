@@ -5,21 +5,35 @@ import { TrendingUp, TrendingDown, BarChart3, DatabaseZap } from 'lucide-react';
 
 // MiniSparkline组件 - 小型折线图
 const MiniSparkline = ({ data, isPositive }: { data: number[]; isPositive: boolean }) => {
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = max - min || 1;
+  const safeData = data.filter((value) => Number.isFinite(value));
+  if (safeData.length === 0) {
+    return (
+      <svg viewBox="0 0 100 40" className="w-20 h-8" preserveAspectRatio="none">
+        <line x1="0" y1="20" x2="100" y2="20" stroke="#CBD5E1" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
 
-  const points = data
+  const min = Math.min(...safeData);
+  const max = Math.max(...safeData);
+  const range = max - min || 1;
+  const chartHeight = 40;
+  const topPadding = 4;
+  const bottomPadding = 4;
+  const drawableHeight = chartHeight - topPadding - bottomPadding;
+
+  const points = safeData
     .map((value, index) => {
-      const x = (index / (data.length - 1)) * 100;
-      const y = 100 - ((value - min) / range) * 100;
+      const x = safeData.length <= 1 ? 50 : (index / (safeData.length - 1)) * 100;
+      const ratio = (value - min) / range;
+      const y = topPadding + (1 - ratio) * drawableHeight;
       return `${x},${y}`;
     })
     .join(' ');
 
   return (
     <svg
-      viewBox="0 0 100 50"
+      viewBox="0 0 100 40"
       className="w-20 h-8"
       preserveAspectRatio="none"
     >
@@ -39,6 +53,7 @@ const MiniSparkline = ({ data, isPositive }: { data: number[]; isPositive: boole
 const HoldingItem = ({
   holding,
   isSelected,
+  isSparklineLoading,
   onClick,
 }: {
   holding: {
@@ -53,6 +68,7 @@ const HoldingItem = ({
     trendData: number[];
   };
   isSelected: boolean;
+  isSparklineLoading: boolean;
   onClick: () => void;
 }) => {
   const isPositive = holding.change >= 0;
@@ -106,7 +122,11 @@ const HoldingItem = ({
             {holding.profitLoss.toFixed(2)}
           </span>
         </div>
-        <MiniSparkline data={holding.trendData} isPositive={isPositive} />
+        {isSparklineLoading ? (
+          <div className="w-20 h-8 rounded bg-slate-100 animate-pulse" />
+        ) : (
+          <MiniSparkline data={holding.trendData} isPositive={isPositive} />
+        )}
       </div>
     </button>
   );
@@ -118,9 +138,12 @@ export const HoldingsPanel = () => {
     holdings,
     selectedStock,
     setSelectedStock,
+    isLoading,
     isQuotesLoading,
     isBackendConnected,
   } = useStockStore();
+
+  const isSparklineLoading = isLoading || isQuotesLoading;
 
   const handleStockClick = (symbol: string) => {
     setSelectedStock(symbol);
@@ -132,7 +155,7 @@ export const HoldingsPanel = () => {
 
   // 计算总市值和总盈亏
   const totalValue = holdings.reduce((sum, h) => sum + h.totalValue, 0);
-  const totalCost = holdings.reduce((sum, h) => sum + h.cost, 0);
+  const totalCost = holdings.reduce((sum, h) => sum + h.cost * h.shares, 0);
   const totalProfitLoss = totalValue - totalCost;
   const totalProfitLossPercent = totalCost > 0 ? (totalProfitLoss / totalCost) * 100 : 0;
   const isPositiveTotal = totalProfitLoss >= 0;
@@ -197,6 +220,7 @@ export const HoldingsPanel = () => {
               key={holding.symbol}
               holding={holding}
               isSelected={selectedStock === holding.symbol}
+              isSparklineLoading={isSparklineLoading}
               onClick={() => handleStockClick(holding.symbol)}
             />
           ))
@@ -216,7 +240,7 @@ export const HoldingsPanel = () => {
       {/* 底部提示 */}
       <div className="p-3 border-t border-slate-100">
         <p className="text-xs text-slate-400 text-center">
-          点击股票查看详情 · 数据每3秒刷新
+          点击股票查看详情 · 数据每10秒刷新
         </p>
       </div>
     </div>
