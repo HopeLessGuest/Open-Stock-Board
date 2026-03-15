@@ -31,12 +31,21 @@ def _raise_data_source_error(source: str, exc: Exception) -> None:
     raise DataSourceUnavailableError(f"Upstream data source unavailable for {source}") from exc
 
 
+def _ensure_host_reachable(host: str, source: str, timeout_sec: float = 1.5) -> None:
+    try:
+        with socket.create_connection((host, 443), timeout=timeout_sec):
+            return
+    except OSError as exc:
+        _raise_data_source_error(source, exc)
+
+
 def _normalize_symbol(symbol: str) -> str:
     return str(symbol).strip().split(".")[0]
 
 
 def fetch_quotes(symbols: list[str]) -> list[dict]:
     ak = _import_akshare()
+    _ensure_host_reachable("82.push2.eastmoney.com", "quotes")
 
     clean_symbols = {_normalize_symbol(item) for item in symbols if str(item).strip()}
     if not clean_symbols:
@@ -89,6 +98,7 @@ def _period_to_days(range_value: str) -> int:
 
 def fetch_chart(range_value: str, symbol: str | None = None) -> list[dict]:
     ak = _import_akshare()
+    _ensure_host_reachable("push2his.eastmoney.com", "chart")
 
     # For now we use daily bars as a stable baseline. If symbol is empty, use SH index as market proxy.
     target_symbol = _normalize_symbol(symbol or "000001")
@@ -133,6 +143,7 @@ def fetch_chart(range_value: str, symbol: str | None = None) -> list[dict]:
 
 def fetch_news(limit: int = 20) -> list[dict]:
     ak = _import_akshare()
+    _ensure_host_reachable("np-weblist.eastmoney.com", "news")
 
     try:
         df = ak.stock_info_global_em()
@@ -169,6 +180,7 @@ def fetch_news(limit: int = 20) -> list[dict]:
 
 def fetch_industries(limit: int = 20) -> list[dict]:
     ak = _import_akshare()
+    _ensure_host_reachable("17.push2.eastmoney.com", "industries")
 
     try:
         df = ak.stock_board_industry_name_em()
@@ -206,37 +218,26 @@ def check_data_source_health(timeout_sec: float = 1.5) -> dict:
             "details": "AKShare import failed",
         }
 
-    try:
-        with socket.create_connection(("82.push2.eastmoney.com", 443), timeout=timeout_sec):
-            upstream_reachable = True
-    except OSError:
-        upstream_reachable = False
-
-    probes: dict[str, bool] = {}
-    probe_messages: dict[str, str] = {}
-
-    probe_cases = {
-        "quotes": lambda: fetch_quotes(["600519"]),
-        "chart": lambda: fetch_chart("1d", "600519"),
-        "news": lambda: fetch_news(1),
-        "industries": lambda: fetch_industries(1),
+    probe_hosts = {
+        "quotes": "82.push2.eastmoney.com",
+        "chart": "push2his.eastmoney.com",
+        "news": "np-weblist.eastmoney.com",
+        "industries": "17.push2.eastmoney.com",
     }
-    for probe_name, runner in probe_cases.items():
+    probes: dict[str, bool] = {}
+    for probe_name, host in probe_hosts.items():
         try:
-            runner()
-            probes[probe_name] = True
-        except DataSourceUnavailableError as exc:
+            with socket.create_connection((host, 443), timeout=timeout_sec):
+                probes[probe_name] = True
+        except OSError:
             probes[probe_name] = False
-            probe_messages[probe_name] = str(exc)
-        except Exception as exc:  # pragma: no cover - defensive
-            probes[probe_name] = False
-            probe_messages[probe_name] = f"unexpected error: {exc.__class__.__name__}"
+
+    upstream_reachable = any(probes.values())
 
     return {
         "akshareAvailable": akshare_available,
         "upstreamReachable": upstream_reachable,
         "details": "ok" if upstream_reachable else "Eastmoney upstream unreachable",
         "probes": probes,
-        "probeMessages": probe_messages,
         "allProbesPassed": all(probes.values()) if probes else False,
     }

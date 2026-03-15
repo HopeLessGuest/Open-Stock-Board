@@ -7,16 +7,14 @@ import type { NewsItem } from '@/types';
 
 // 新闻分类标签
 const categoryIcons = {
-  market: LineChart,
+  world: LineChart,
   company: Building2,
-  economy: TrendingUp,
   industry: TrendingUp,
 };
 
 const categoryLabels = {
-  market: '市场',
+  world: '世界',
   company: '公司',
-  economy: '宏观',
   industry: '行业',
 };
 
@@ -74,6 +72,12 @@ const NewsCard = ({ item }: { item: NewsItem }) => {
             <span className="text-xs text-slate-500">
               {categoryLabels[item.category]}
             </span>
+            {item.industry && (
+              <>
+                <span className="text-xs text-slate-300">·</span>
+                <span className="text-xs text-slate-500">{item.industry}</span>
+              </>
+            )}
             <span className="text-xs text-slate-300">·</span>
             <span className="text-xs text-slate-400">{item.source}</span>
             <span className="text-xs text-slate-300">·</span>
@@ -137,12 +141,13 @@ const NewsCard = ({ item }: { item: NewsItem }) => {
 // 主新闻面板组件
 export const NewsFeed = () => {
   const { news, selectedStock, isNewsLoading, isBackendConnected } = useStockStore();
-  const [activeTab, setActiveTab] = useState<'all' | 'market' | 'company'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'world' | 'company' | 'industry'>('all');
 
   // 筛选新闻
   const filteredNews = news.filter((item) => {
     if (activeTab === 'all') return true;
-    if (activeTab === 'market') return item.category === 'market';
+    if (activeTab === 'world') return item.category === 'world';
+    if (activeTab === 'industry') return item.category === 'industry';
     if (activeTab === 'company') {
       return (
         item.category === 'company' ||
@@ -163,7 +168,7 @@ export const NewsFeed = () => {
 
         {/* 标签页切换 */}
         <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
-          {(['all', 'market', 'company'] as const).map((tab) => (
+          {(['all', 'world', 'company', 'industry'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -173,7 +178,7 @@ export const NewsFeed = () => {
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              {tab === 'all' ? '全部' : tab === 'market' ? '市场' : '公司'}
+              {tab === 'all' ? '全部' : tab === 'world' ? '世界' : tab === 'company' ? '公司' : '行业'}
             </button>
           ))}
         </div>
@@ -201,10 +206,22 @@ export const NewsFeed = () => {
             <div className="text-center px-6">
               <DatabaseZap className="w-7 h-7 mx-auto text-slate-400 mb-2" />
               <p className="text-sm font-medium text-slate-600">
-                {!isBackendConnected && news.length === 0 ? '未连接数据' : '暂无新闻数据'}
+                {!isBackendConnected && news.length === 0
+                  ? '未连接数据'
+                  : activeTab === 'company'
+                  ? '暂无公司新闻'
+                  : activeTab === 'industry'
+                  ? '暂无行业新闻'
+                  : activeTab === 'world'
+                  ? '暂无世界新闻'
+                  : '暂无新闻数据'}
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                {!isBackendConnected && news.length === 0 ? '请确认后端新闻接口已启动' : '可尝试切换筛选标签'}
+                {!isBackendConnected && news.length === 0
+                  ? '请确认后端新闻接口已启动'
+                  : activeTab === 'company'
+                  ? '当前数据源仅提供市场新闻，公司新闻待支持'
+                  : '可尝试切换筛选标签'}
               </p>
             </div>
           </div>

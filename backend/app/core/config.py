@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     app_debug: bool = False
     app_host: str = "127.0.0.1"
-    app_port: int = 8787
+    app_port: int = 8790
 
     api_prefix: str = "/api/a-share"
     allowed_origins: List[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]

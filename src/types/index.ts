@@ -31,7 +31,9 @@ export interface NewsItem {
   // 情绪标签
   sentiment: 'bullish' | 'bearish' | 'neutral';
   // 分类
-  category: 'market' | 'company' | 'economy' | 'industry';
+  category: 'world' | 'company' | 'industry';
+  // 行业标签
+  industry?: string;
   // 详情链接
   detailUrl?: string;
   // 是否已展开

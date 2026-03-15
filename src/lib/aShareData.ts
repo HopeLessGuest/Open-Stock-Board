@@ -60,6 +60,33 @@ const pick = <T = Primitive>(obj: GenericRecord, keys: string[], fallback?: T): 
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const NEWS_COMPANY_KEYWORDS = ['股份', '集团', '公司', '公告', '财报', '业绩', '回购', '增持', '减持'];
+const NEWS_INDUSTRY_KEYWORDS = ['行业', '板块', '半导体', '芯片', '新能源', '光伏', '医药', '银行', '券商', '汽车', '军工'];
+const NEWS_BULLISH_KEYWORDS = ['上涨', '走强', '利好', '突破', '增长', '增持', '创历史新高', '高开'];
+const NEWS_BEARISH_KEYWORDS = ['下跌', '走弱', '利空', '回落', '下滑', '减持', '暴跌', '低开'];
+
+const inferNewsCategory = (title: string, summary: string): NewsItem['category'] => {
+  const text = `${title} ${summary}`;
+  if (NEWS_INDUSTRY_KEYWORDS.some((kw) => text.includes(kw))) return 'industry';
+  if (NEWS_COMPANY_KEYWORDS.some((kw) => text.includes(kw))) return 'company';
+  return 'world';
+};
+
+const inferNewsSentiment = (title: string, summary: string): NewsItem['sentiment'] => {
+  const text = `${title} ${summary}`;
+  const bullishScore = NEWS_BULLISH_KEYWORDS.reduce((acc, kw) => acc + (text.includes(kw) ? 1 : 0), 0);
+  const bearishScore = NEWS_BEARISH_KEYWORDS.reduce((acc, kw) => acc + (text.includes(kw) ? 1 : 0), 0);
+  if (bullishScore > bearishScore) return 'bullish';
+  if (bearishScore > bullishScore) return 'bearish';
+  return 'neutral';
+};
+
+const inferNewsIndustry = (title: string, summary: string): string | undefined => {
+  const text = `${title} ${summary}`;
+  const matched = NEWS_INDUSTRY_KEYWORDS.find((kw) => text.includes(kw));
+  return matched || undefined;
+};
+
 const requestJSON = async <T>(path: string, params?: Record<string, string>): Promise<T> => {
   if (!API_BASE_URL) {
     throw new Error('Missing VITE_A_SHARE_API_BASE_URL');
@@ -325,20 +352,40 @@ export const fetchAShareNews = async (): Promise<NewsItem[]> => {
   const response = await requestJSON<{ data?: GenericRecord[]; news?: GenericRecord[] }>('news');
   const rows = (response.data || response.news || []) as GenericRecord[];
 
-  return rows.map((row, index) => ({
-    id: String(pick(row, ['id'], `news-${index}`)),
-    title: String(pick(row, ['title'], '')),
-    summary: String(pick(row, ['summary', 'content'], '')),
-    source: String(pick(row, ['source'], '未知来源')),
-    publishTime: String(pick(row, ['publishTime', 'time'], '刚刚')),
-    relatedSymbols: Array.isArray(row.relatedSymbols)
-      ? (row.relatedSymbols as string[])
-      : undefined,
-    sentiment: (String(pick(row, ['sentiment'], 'neutral')) as NewsItem['sentiment']) || 'neutral',
-    category: (String(pick(row, ['category'], 'market')) as NewsItem['category']) || 'market',
-    detailUrl: String(pick(row, ['detailUrl', 'url'], '')) || undefined,
-    isExpanded: false,
-  }));
+  return rows.map((row, index) => {
+    const title = String(pick(row, ['title'], ''));
+    const summary = String(pick(row, ['summary', 'content'], ''));
+    const rawCategory = String(pick(row, ['category'], '')).toLowerCase();
+    const mappedCategory: NewsItem['category'] =
+      rawCategory === 'company'
+        ? 'company'
+        : rawCategory === 'industry'
+          ? 'industry'
+          : rawCategory === 'world' || rawCategory === 'market' || rawCategory === 'economy'
+            ? 'world'
+            : inferNewsCategory(title, summary);
+    const rawSentiment = String(pick(row, ['sentiment'], '')).toLowerCase();
+    const mappedSentiment: NewsItem['sentiment'] =
+      rawSentiment === 'bullish' || rawSentiment === 'bearish' || rawSentiment === 'neutral'
+        ? rawSentiment
+        : inferNewsSentiment(title, summary);
+
+    return {
+      id: String(pick(row, ['id'], `news-${index}`)),
+      title,
+      summary,
+      source: String(pick(row, ['source'], '未知来源')),
+      publishTime: String(pick(row, ['publishTime', 'time'], '刚刚')),
+      relatedSymbols: Array.isArray(row.relatedSymbols)
+        ? (row.relatedSymbols as string[])
+        : undefined,
+      sentiment: mappedSentiment,
+      category: mappedCategory,
+      industry: String(pick(row, ['industry'], '')).trim() || inferNewsIndustry(title, summary),
+      detailUrl: String(pick(row, ['detailUrl', 'url'], '')) || undefined,
+      isExpanded: false,
+    };
+  });
 };
 
 export const fetchAShareIndustries = async (): Promise<IndustryData[]> => {
