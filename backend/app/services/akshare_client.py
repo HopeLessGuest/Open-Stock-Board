@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 import socket
+import time
+from threading import Lock
 from typing import Literal
 
 from requests.exceptions import RequestException
@@ -41,6 +43,29 @@ def _ensure_host_reachable(host: str, source: str, timeout_sec: float = 1.5) -> 
 
 def _normalize_symbol(symbol: str) -> str:
     return str(symbol).strip().split(".")[0]
+
+
+CHART_CACHE_TTL_SEC = 15
+_chart_cache: dict[str, tuple[float, list[dict]]] = {}
+_chart_cache_lock = Lock()
+
+
+def _get_cached_chart(cache_key: str) -> list[dict] | None:
+    now = time.time()
+    with _chart_cache_lock:
+        cached = _chart_cache.get(cache_key)
+        if not cached:
+            return None
+        ts, data = cached
+        if now - ts > CHART_CACHE_TTL_SEC:
+            _chart_cache.pop(cache_key, None)
+            return None
+        return data.copy()
+
+
+def _set_cached_chart(cache_key: str, data: list[dict]) -> None:
+    with _chart_cache_lock:
+        _chart_cache[cache_key] = (time.time(), data.copy())
 
 
 def fetch_quotes(symbols: list[str]) -> list[dict]:
@@ -98,18 +123,31 @@ def _period_to_days(range_value: str) -> int:
 
 def fetch_chart(range_value: str, symbol: str | None = None) -> list[dict]:
     ak = _import_akshare()
-    _ensure_host_reachable("push2his.eastmoney.com", "chart")
+    # Use daily bars as a stable baseline. If symbol is empty, use SH index as market proxy.
+    target_symbol = _normalize_symbol(symbol) if symbol else ""
+    target_symbol = target_symbol or None
+    cache_key = f"{range_value}:{target_symbol or 'market_proxy'}"
+    cached = _get_cached_chart(cache_key)
+    if cached is not None:
+        return cached
 
-    # For now we use daily bars as a stable baseline. If symbol is empty, use SH index as market proxy.
-    target_symbol = _normalize_symbol(symbol or "000001")
     period_days = _period_to_days(range_value)
 
     try:
-        df = ak.stock_zh_a_hist(
-            symbol=target_symbol,
-            period="daily",
-            adjust="qfq",
-        )
+        if target_symbol:
+            _ensure_host_reachable("push2his.eastmoney.com", "chart")
+            df = ak.stock_zh_a_hist(
+                symbol=target_symbol,
+                period="daily",
+                adjust="qfq",
+            )
+        else:
+            # 000001 here is SH index code in AKShare index endpoint.
+            _ensure_host_reachable("push2his.eastmoney.com", "chart")
+            df = ak.index_zh_a_hist(
+                symbol="000001",
+                period="daily",
+            )
     except (RequestException, OSError, TimeoutError, ValueError) as exc:
         _raise_data_source_error("chart", exc)
 
@@ -120,14 +158,14 @@ def fetch_chart(range_value: str, symbol: str | None = None) -> list[dict]:
     if df.empty:
         return []
 
-    base_close = _to_float(df.iloc[0].get("收盘"), 1.0)
+    base_close = _to_float(df.iloc[0].get("收盘", df.iloc[0].get("close")), 1.0)
     if base_close <= 0:
         base_close = 1.0
 
     points: list[dict] = []
     for _, row in df.iterrows():
-        close = _to_float(row.get("收盘"))
-        dt = str(row.get("日期"))
+        close = _to_float(row.get("收盘", row.get("close")))
+        dt = str(row.get("日期", row.get("date")))
         yield_rate = ((close - base_close) / base_close) * 100
         points.append(
             {
@@ -138,6 +176,7 @@ def fetch_chart(range_value: str, symbol: str | None = None) -> list[dict]:
             }
         )
 
+    _set_cached_chart(cache_key, points)
     return points
 
 
