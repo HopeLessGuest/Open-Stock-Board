@@ -40,6 +40,120 @@ const recalcHoldingByPrice = (holding: HoldingItem, currentPrice: number): Holdi
   };
 };
 
+// 行业分类映射
+const SECTOR_MAP: Record<string, string> = {
+  // 白酒
+  '600519': '白酒', '000858': '白酒', '000596': '白酒', '002304': '白酒',
+  '603369': '白酒', '600779': '白酒', '000568': '白酒', '002266': '白酒',
+  // 银行
+  '000001': '银行', '600036': '银行', '601398': '银行', '601288': '银行',
+  '601939': '银行', '601988': '银行', '601818': '银行', '601166': '银行',
+  '600000': '银行', '600016': '银行', '601328': '银行', '601998': '银行',
+  // 保险
+  '601318': '保险', '601601': '保险', '601628': '保险', '601336': '保险',
+  // 证券
+  '600030': '证券', '601688': '证券', '000776': '证券', '601211': '证券',
+  // 家电
+  '600690': '家电', '000333': '家电', '002408': '家电',
+  // 医药
+  '600276': '医药', '000538': '医药', '603259': '医药', '600867': '医药',
+  // 电力/能源
+  '600900': '电力', '601985': '核电', '600027': '能源',
+  // 房地产
+  '000002': '房地产', '600048': '房地产',
+  // 有色金属
+  '601899': '有色金属', '600547': '有色金属',
+  // 科技
+  '002415': '科技', '000725': '科技', '002230': '科技',
+};
+
+const classifySector = (symbol: string): string =>
+  SECTOR_MAP[symbol.replace(/\.\w+$/, '').trim()] ?? '其他';
+
+const buildLocalChartData = (
+  holdings: HoldingItem[],
+  range: TimeRange,
+  selectedStock: string | null,
+): ChartData[] => {
+  const targets = selectedStock
+    ? holdings.filter((h) => h.symbol === selectedStock)
+    : holdings;
+
+  if (targets.length === 0) return [];
+
+  const now = new Date();
+  const ytdDays = Math.max(1, Math.floor(
+    (now.getTime() - new Date(now.getFullYear(), 0, 1).getTime()) / 86400000
+  ));
+  const daysMap: Record<TimeRange, number> = {
+    '1D': 1, '1W': 7, '1M': 30, '3M': 90, '1Y': 365, 'YTD': ytdDays,
+  };
+  const days = daysMap[range];
+  const numPoints = Math.min(days, 30);
+
+  return Array.from({ length: numPoints }, (_, i) => {
+    const progress = numPoints <= 1 ? 1 : i / (numPoints - 1);
+
+    const d = new Date(now);
+    d.setDate(now.getDate() - days + Math.round(progress * days));
+    const dateStr = d.toISOString().split('T')[0];
+
+    let totalValue = 0;
+    let totalCost = 0;
+
+    for (const h of targets) {
+      const tLen = h.trendData.length;
+      if (tLen === 0) continue;
+      const tIdx = Math.min(Math.floor(progress * (tLen - 1)), tLen - 1);
+      const price = h.trendData[tIdx] ?? h.currentPrice;
+      totalValue += price * h.shares;
+      totalCost += h.cost * h.shares;
+    }
+
+    const yieldAmount = totalValue - totalCost;
+    const yieldRate = totalCost > 0 ? (yieldAmount / totalCost) * 100 : 0;
+
+    return {
+      date: dateStr,
+      yieldRate: Number(yieldRate.toFixed(2)),
+      yieldAmount: Number(yieldAmount.toFixed(2)),
+    };
+  });
+};
+
+const buildLocalIndustriesData = (holdings: HoldingItem[]): IndustryData[] => {
+  if (holdings.length === 0) return [];
+
+  const sectors = new Map<
+    string,
+    { totalValue: number; weightedChange: number; leadingName: string; leadingChange: number; leadingAbs: number }
+  >();
+
+  for (const h of holdings) {
+    const sector = classifySector(h.symbol);
+    const s = sectors.get(sector) ?? {
+      totalValue: 0, weightedChange: 0, leadingName: '', leadingChange: 0, leadingAbs: 0,
+    };
+    s.totalValue += h.totalValue;
+    s.weightedChange += h.changePercent * h.totalValue;
+    if (Math.abs(h.changePercent) > s.leadingAbs) {
+      s.leadingAbs = Math.abs(h.changePercent);
+      s.leadingName = h.name;
+      s.leadingChange = h.changePercent;
+    }
+    sectors.set(sector, s);
+  }
+
+  return Array.from(sectors.entries()).map(([name, s]) => ({
+    name,
+    changePercent: Number((s.totalValue > 0 ? s.weightedChange / s.totalValue : 0).toFixed(2)),
+    change: 0,
+    amount: Number(s.totalValue.toFixed(0)),
+    leadingStock: s.leadingName,
+    leadingStockChange: Number(s.leadingChange.toFixed(2)),
+  }));
+};
+
 
 interface StockStoreContextType {
   // 持仓列表
@@ -155,16 +269,20 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
     setIsChartLoading(true);
     try {
       const nextChartData = await fetchAShareChartData(range, symbol);
-      setChartData(nextChartData);
-      setIsBackendConnected(true);
+      if (nextChartData.length > 0) {
+        setChartData(nextChartData);
+        setIsBackendConnected(true);
+        return;
+      }
     } catch (error) {
       console.error('Chart request failed:', error);
-      setChartData([]);
       setIsBackendConnected(false);
       notifyApiError('图表服务连接失败，请检查后端 API。');
     } finally {
       setIsChartLoading(false);
     }
+    // Fallback: compute locally from holdings trendData
+    setChartData(buildLocalChartData(holdingsRef.current, range, symbol ?? null));
   }, [notifyApiError]);
 
   // 刷新价格（实时接口）
@@ -315,6 +433,7 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
 
       try {
         const baseHoldings = await loadPortfolioFromTrades();
+        let latestHoldings = baseHoldings;
         if (!cancelled) {
           setHoldings(baseHoldings);
         }
@@ -324,7 +443,9 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
           try {
             const quotes = await fetchAShareQuotes(baseHoldings.map((item) => item.symbol));
             if (!cancelled) {
-              setHoldings((prevHoldings) => applyQuotesToHoldings(prevHoldings, quotes));
+              const applied = applyQuotesToHoldings(baseHoldings, quotes);
+              latestHoldings = applied;
+              setHoldings(applied);
               setIsBackendConnected(true);
             }
           } catch (error) {
@@ -352,14 +473,18 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
           ]);
           if (!cancelled) {
             setNews(latestNews);
-            setIndustries(latestIndustries);
+            setIndustries(
+              latestIndustries.length > 0
+                ? latestIndustries
+                : buildLocalIndustriesData(latestHoldings)
+            );
             setIsBackendConnected(true);
           }
         } catch (error) {
           console.error('News or industries request failed:', error);
           if (!cancelled) {
             setNews([]);
-            setIndustries([]);
+            setIndustries(buildLocalIndustriesData(latestHoldings));
             setIsBackendConnected(false);
             notifyApiError('新闻或行业服务连接失败，请检查后端 API。');
           }
@@ -401,6 +526,13 @@ export const StockStoreProvider = ({ children }: StockStoreProviderProps) => {
   useEffect(() => {
     void loadChartData(timeRange, selectedStock);
   }, [timeRange, selectedStock, loadChartData]);
+
+  // 当 holdings 更新且行业数据为空时，使用本地计算填充
+  useEffect(() => {
+    if (holdings.length > 0 && industries.length === 0) {
+      setIndustries(buildLocalIndustriesData(holdings));
+    }
+  }, [holdings, industries]);
 
   useEffect(() => {
     return () => {
