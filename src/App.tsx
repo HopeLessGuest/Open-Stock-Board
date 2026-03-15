@@ -102,14 +102,14 @@ const MainContent = ({
         </div>
 
         {/* 中间区域 */}
-        <div className="col-span-12 lg:col-span-1 self-stretch flex flex-col gap-4">
-          {/* 主看板 - 图表 (1:0.7) */}
-          <div className="flex-[1] min-h-0">
+        <div className="col-span-12 lg:col-span-1 self-start flex flex-col gap-4">
+          {/* 主看板 - 图表 (1) */}
+          <div className="h-[50vh]">
             <MainChartBoard />
           </div>
 
-          {/* 市场概览面板 (1:0.7) */}
-          <div className="flex-[0.7] min-h-0">
+          {/* 市场概览面板 (0.7) */}
+          <div>
             <MarketOverviewPanel />
           </div>
         </div>
